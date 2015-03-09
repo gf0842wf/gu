@@ -41,9 +41,6 @@ class ProtocolException(Exception):
 
 class Protocol(object):
     """ Server / Client Handler
-    >>> from gevent.server import StreamServer
-    >>> server = StreamServer(('0.0.0.0', 6000), Protocol)
-    >>> server.serve_forever()
     """
 
     id_generator = id_generator()

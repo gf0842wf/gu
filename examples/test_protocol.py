@@ -1,4 +1,13 @@
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
+
+""" description
+test server and client
+"""
+
+__author__ = 'wangfei'
+__date__ = '2015/03/06'
+
 from gnet.protocol import Protocol
 import gevent
 import logging
@@ -33,7 +42,7 @@ gevent.spawn(server.serve_forever)
 class EchoClientProtocol(Protocol):
     def connection_made(self):
         logger.info('connection made')
-        # self.send_data('ooxx')
+        self.send_data('ooxx')
 
     def data_received(self, data):
         logger.debug('data received: %s', data)
