@@ -10,6 +10,7 @@ __author__ = 'wangfei'
 __date__ = '2015/03/11'
 
 import MySQLdb
+import MySQLdb.cursors
 import copy
 import logging
 import time
@@ -21,54 +22,16 @@ class MySQLdbConnection(object):
     """ Need: MySQLdb version >= 1.2.5 and MySQL version > 5.1.12.
     """
 
-    def init(self, host, database, user=None, passwd=None,
-             max_idle_time=7 * 3600, connect_timeout=0,
-             time_zone="+0:00", charset="utf8", sql_mode="TRADITIONAL",
-             **kwargs):
-
-        self.host = host
-        self.database = database
-        self.max_idle_time = float(max_idle_time)
-
-        args = dict(conv=CONVERSIONS, use_unicode=True, charset=charset,
-                    db=database, init_command=('SET time_zone = "%s"' % time_zone),
-                    connect_timeout=connect_timeout, sql_mode=sql_mode, **kwargs)
-        if user is not None:
-            args["user"] = user
-        if passwd is not None:
-            args["passwd"] = passwd
-
-        # We accept a path to a MySQL socket file or a host(:port) string
-        if "/" in host:
-            args["unix_socket"] = host
-        else:
-            self.socket = None
-            pair = host.split(":")
-            if len(pair) == 2:
-                args["host"] = pair[0]
-                args["port"] = int(pair[1])
-            else:
-                args["host"] = host
-                args["port"] = 3306
-
-        self._db = None
-        self._db_args = args
-        self._last_use_time = time.time()
-        try:
-            self.reconnect()
-        except Exception:
-            logger.error("Cannot connect to MySQL on %s", self.host,
-                         exc_info=True)
-
     def __init__(self, host, user, passwd, db, port=3306, autocommit=True, charset='utf8', reconnect_delay=0,
                  max_idle_time=7 * 3600, sql_mode='TRADITIONAL', time_zone='+0:00', connect_timeout=0):
         self.host = host
         self.db = db
         self.max_idle_time = float(max_idle_time)
 
-        args = dict(conv=CONVERSIONS, use_unicode=True, charset=charset,
-                    db=db, init_command=('SET time_zone = "%s"' % time_zone),
-                    connect_timeout=connect_timeout, sql_mode=sql_mode)
+        args = dict(conv=CONVERSIONS, use_unicode=True, charset=charset, db=db,
+                    init_command=('SET time_zone = "%s"' % time_zone), connect_timeout=connect_timeout,
+                    sql_mode=sql_mode)
+
         if user is not None:
             args['user'] = user
         if passwd is not None:
@@ -78,20 +41,16 @@ class MySQLdbConnection(object):
         if '/' in host:
             args['unix_socket'] = host
         else:
-            self.socket = None
-            pair = host.split(':')
-            if len(pair) == 2:
-                args['host'] = pair[0]
-                args['port'] = int(pair[1])
-            else:
-                args['host'] = host
-                args['port'] = 3306
+            args['host'] = host
+            args['port'] = port
 
         self._db = None
         self._db_args = args
         self._last_use_time = time.time()
 
         self.autocommit = autocommit
+        self.reconnect_delay = reconnect_delay
+
         try:
             self.reconnect()
         except:
@@ -108,17 +67,24 @@ class MySQLdbConnection(object):
 
     def reconnect(self):
         """Closes the existing database connection and re-opens it."""
-        self.close()
-        self._db = MySQLdb.connect(**self._db_args)
-        if self.autocommit:
-            self._db.autocommit(True)
+        while True:
+            self.close()
+            try:
+                logger.info('trying reconnect..')
+                self._db = MySQLdb.connect(**self._db_args)
+                if self.autocommit:
+                    self._db.autocommit(True)
+                logger.info('reconnected.')
+                break
+            except:
+                logger.error('reconnect except', exc_info=1)
+            time.sleep(self.reconnect_delay)
 
-    def iter(self, query, *parameters, **kwparameters):
-        """Returns an iterator for the given query and parameters."""
-        self._ensure_connected()
+    def iter(self, query, *args, **kwargs):
+        """Returns an iterator for the given query and args."""
         cursor = MySQLdb.cursors.SSCursor(self._db)
         try:
-            self._execute(cursor, query, parameters, kwparameters)
+            self._execute(cursor, query, args, kwargs)
             column_names = [d[0] for d in cursor.description]
             for row in cursor:
                 yield Row(zip(column_names, row))
@@ -126,7 +92,7 @@ class MySQLdbConnection(object):
             cursor.close()
 
     def fetchall(self, query, *args, **kwargs):
-        """Returns a row list for the given query and parameters."""
+        """Returns a row list for the given query and args."""
         cursor = self._cursor()
         try:
             self._execute(cursor, query, args, kwargs)
@@ -140,11 +106,11 @@ class MySQLdbConnection(object):
         If the query has no results, returns None.  If it has
         more than one result, raises an exception.
         """
-        rows = self.query(query, *args, **kwargs)
+        rows = self.fetchall(query, *args, **kwargs)
         if not rows:
             return None
-        # elif len(rows) > 1:
-        # raise Exception("Multiple rows returned for Database.get() query")
+        elif len(rows) > 1:
+            logger.warn('Multiple rows returned for fetchone')
         else:
             return rows[0]
 
@@ -154,48 +120,48 @@ class MySQLdbConnection(object):
         """Executes the given query, returning the lastrowid from the query."""
         return self.execute_lastrowid(query, *args, **kwargs)
 
-    def execute_lastrowid(self, query, *parameters, **kwparameters):
+    def execute_lastrowid(self, query, *args, **kwargs):
         """Executes the given query, returning the lastrowid from the query."""
         cursor = self._cursor()
         try:
-            self._execute(cursor, query, parameters, kwparameters)
+            self._execute(cursor, query, args, kwargs)
             return cursor.lastrowid
         finally:
             cursor.close()
 
-    def execute_rowcount(self, query, *parameters, **kwparameters):
+    def execute_rowcount(self, query, *args, **kwargs):
         """Executes the given query, returning the rowcount from the query."""
         cursor = self._cursor()
         try:
-            self._execute(cursor, query, parameters, kwparameters)
+            self._execute(cursor, query, args, kwargs)
             return cursor.rowcount
         finally:
             cursor.close()
 
-    def executemany(self, query, parameters):
+    def executemany(self, query, args):
         """Executes the given query against all the given param sequences.
         We return the lastrowid from the query.
         """
-        return self.executemany_lastrowid(query, parameters)
+        return self.executemany_lastrowid(query, args)
 
-    def executemany_lastrowid(self, query, parameters):
+    def executemany_lastrowid(self, query, args):
         """Executes the given query against all the given param sequences.
         We return the lastrowid from the query.
         """
         cursor = self._cursor()
         try:
-            cursor.executemany(query, parameters)
+            cursor.executemany(query, args)
             return cursor.lastrowid
         finally:
             cursor.close()
 
-    def executemany_rowcount(self, query, parameters):
+    def executemany_rowcount(self, query, args):
         """Executes the given query against all the given param sequences.
         We return the rowcount from the query.
         """
         cursor = self._cursor()
         try:
-            cursor.executemany(query, parameters)
+            cursor.executemany(query, args)
             return cursor.rowcount
         finally:
             cursor.close()
@@ -206,28 +172,25 @@ class MySQLdbConnection(object):
     insert = execute_lastrowid
     insertmany = executemany_lastrowid
 
-    def _ensure_connected(self):
-        # Mysql by default closes client connections that are idle for
-        # 8 hours, but the client library does not report this fact until
-        # you try to perform a query and it fails.  Protect against this
-        # case by preemptively closing and reopening the connection
-        # if it has been idle for too long (7 hours by default).
-        if (self._db is None or
-                (time.time() - self._last_use_time > self.max_idle_time)):
-            self.reconnect()
-        self._last_use_time = time.time()
-
     def _cursor(self):
-        self._ensure_connected()
         return self._db.cursor()
 
-    def _execute(self, cursor, query, parameters, kwparameters):
+    def _execute(self, cursor, query, args, kwargs):
         try:
-            return cursor.execute(query, kwparameters or parameters)
-        except OperationalError:
-            logger.error("Error connecting to MySQL on %s", self.host)
-            self.close()
-            raise
+            return cursor.execute(query, kwargs or args)
+        except:  # OperationalError等
+            if self.reconnect_delay > 0:
+                self.reconnect()
+                # TODO: 语法等错误,重连后不再执行下面这句,直接return False, 而且要日志记录
+                try:
+                    return cursor.execute(query, kwargs or args)
+                except:
+                    logger.error('[Error query]:sql: %s args: %s', query, args, exc_info=1)
+                    return False
+            else:
+                logger.error('[Error query]:sql: %s args: %s. Not reconnect', query, args, exc_info=1)
+                self.close()
+                return False
 
 
 class Row(dict):
@@ -242,6 +205,9 @@ class Row(dict):
 
 if MySQLdb is not None:
     # Fix the access conversions to properly recognize unicode/binary
+    import MySQLdb.constants
+    import MySQLdb.converters
+
     FIELD_TYPE = MySQLdb.constants.FIELD_TYPE
     FLAG = MySQLdb.constants.FLAG
     CONVERSIONS = copy.copy(MySQLdb.converters.conversions)
@@ -257,6 +223,8 @@ if MySQLdb is not None:
     IntegrityError = MySQLdb.IntegrityError
     OperationalError = MySQLdb.OperationalError
 
+import umysql
+
 
 class UMySQLConnection(object):
     def __init__(self, host, user, passwd, db, port=3306, autocommit=True, charset='utf8', reconnect_delay=0):
@@ -268,7 +236,7 @@ class UMySQLConnection(object):
         self.conn = umysql.Connection()
         self.conn.connect(*self.args)
 
-    def reconnect(self, delay):
+    def reconnect(self):
         while True:
             self.conn.close()
             self.conn = umysql.Connection()
@@ -279,7 +247,7 @@ class UMySQLConnection(object):
                 break
             except:
                 logger.error('reconnect except', exc_info=1)
-            gevent.sleep(delay)
+            time.sleep(self.reconnect_delay)
 
     def query(self, sql, args):
         """
@@ -290,19 +258,16 @@ class UMySQLConnection(object):
             assert isinstance(args, (tuple, list))
         try:
             return self.conn.query(sql, args)
-        except socket.error:
-            logger.warn('[sending query]: %s', sql, exc_info=1)
-            if self.reconnect_delay is not 0:
-                self.reconnect(self.reconnect_delay)
-                return self.conn.query(sql, args)
-            return False
         except:
-            if not self.conn.is_connected():
-                logger.warn('[sending query]: %s', sql, exc_info=1)
-                if self.reconnect_delay is not 0:
-                    self.reconnect(self.reconnect_delay)
+            logger.warn('[Error query]: %s', sql, exc_info=1)
+            if self.reconnect_delay > 0:
+                self.reconnect()
+                try:
                     return self.conn.query(sql, args)
-                return False
+                except:
+                    logger.error('[Error query]:sql: %s args: %s', sql, args, exc_info=1)
+                    return False
             else:
-                raise
+                logger.error('[Error query]:sql: %s args: %s. Not reconnect', sql, args, exc_info=1)
+                return False
 
