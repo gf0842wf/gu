@@ -27,10 +27,12 @@ logger = logging.getLogger(__name__)
 
 
 class Connection(object):
-    reconnect_delay = 0  # 重连等待时间, 0-不重连
-
-    def __init__(self, host, user, passwd, db, port=3306, autocommit=True, charset='utf8'):
+    def __init__(self, host, user, passwd, db, port=3306, autocommit=True, charset='utf8', reconnect_delay=0):
+        """
+        :param reconnect_delay: 重连等待时间, 0-不重连
+        """
         self.args = (host, port, user, passwd, db, autocommit, charset)
+        self.reconnect_delay = reconnect_delay
         self.conn = umysql.Connection()
         self.conn.connect(*self.args)
 
@@ -82,15 +84,13 @@ class Pool(object):
     : 队列格式: (sql, args, )
     """
 
-    def __init__(self, kwargs, n, reconnect_delay):
-        assert n > 0, n
+    def __init__(self, options, n):
         self.conns = []
         self.queues = []
         self.tasks = []
 
         for _ in xrange(n):
-            c = Connection(**kwargs)
-            c.reconnect_delay = reconnect_delay
+            c = Connection(**options)
             self.conns.append(c)
             q = Queue()
             self.queues.append(q)
@@ -169,13 +169,13 @@ class Pool(object):
     def fetchall(self, sql, args=[], qid=-1, curclass=None, block=True):
         return self.query(sql, args, 2, qid, curclass, block)
 
-    def get_fields(self, tbname):
-        return self.query('select * from %s limit 0' % tbname, [], 3, qid=-1, curclass=None, block=True)
+    def get_fields(self, table_name):
+        return self.query('select * from %s limit 0' % table_name, [], 3, qid=-1, curclass=None, block=True)
 
 
 if __name__ == '__main__':
-    kwargs = dict(host='localhost', user='root', passwd='112358', db='test')
-    pool = Pool(kwargs, 20, 0)
+    test_options = dict(host='localhost', user='root', passwd='112358', db='test', reconnect_delay=5)
+    pool = Pool(test_options, 20)
 
     print pool.fetchall('select * from book where author = "%s"' % 'fk')
 
