@@ -417,7 +417,7 @@ class UMySQLConnection(object):
             time.sleep(self.reconnect_delay)
 
     def query(self, sql, *args, **kwargs):
-        """ 真正执行查询的函数
+        """
         :return: False-表示不重连的时候查询失败
         """
         logger.debug('sql: %s args: %s', sql, str(args))
