@@ -2,104 +2,86 @@
 # -*- coding: utf-8 -*-
 
 """ description
-mysql db client
+mysql db client (可以非gevent使用,如果使用gevent,需要程序入口文件patch all)
 兼容 ultramysql, MySQLdb, pymysql
 """
 
 __author__ = 'wangfei'
 __date__ = '2015/03/11'
 
-import MySQLdb
-import MySQLdb.cursors
 import copy
 import logging
 import time
 
 logger = logging.getLogger(__name__)
 
+try:
+    import MySQLdb
+    import MySQLdb.cursors
+except ImportError:
+    logger.warn('MySQLdb module not found.')
+
 
 class MySQLdbConnection(object):
-    """ Need: MySQLdb version >= 1.2.5 and MySQL version > 5.1.12.
-    """
-
-    def __init__(self, host, user, passwd, db, port=3306, autocommit=True, charset='utf8', reconnect_delay=0,
-                 max_idle_time=7 * 3600, sql_mode='TRADITIONAL', time_zone='+0:00', connect_timeout=0):
-        self.host = host
-        self.db = db
-        self.max_idle_time = float(max_idle_time)
-
-        args = dict(conv=CONVERSIONS, use_unicode=True, charset=charset, db=db,
-                    init_command=('SET time_zone = "%s"' % time_zone), connect_timeout=connect_timeout,
-                    sql_mode=sql_mode)
-
-        if user is not None:
-            args['user'] = user
-        if passwd is not None:
-            args['passwd'] = passwd
-
-        # We accept a path to a MySQL socket file or a host(:port) string
+    def __init__(self, host, user, passwd, db, port=3306, autocommit=True, charset='utf8', reconnect_delay=0):
+        """
+        :param reconnect_delay: 重连等待时间, 0-不重连
+        """
+        self.args = dict(passwd=passwd, user=user, charset=charset, db=db)
         if '/' in host:
-            args['unix_socket'] = host
+            self.args['unix_socket'] = host
         else:
-            args['host'] = host
-            args['port'] = port
-
-        self._db = None
-        self._db_args = args
-        self._last_use_time = time.time()
-
-        self.autocommit = autocommit
+            self.args['host'] = host
+            self.args['port'] = port
         self.reconnect_delay = reconnect_delay
-
-        try:
-            self.reconnect()
-        except:
-            logger.error('Cannot connect to MySQL on %s', self.host, exc_info=1)
-
-    def __del__(self):
-        self.close()
-
-    def close(self):
-        """Closes this database connection."""
-        if getattr(self, "_db", None) is not None:
-            self._db.close()
-            self._db = None
+        self.conn = MySQLdb.Connection(**self.args)
+        self.autocommit = autocommit
+        if self.autocommit:
+            self.conn.autocommit(True)
 
     def reconnect(self):
-        """Closes the existing database connection and re-opens it."""
         while True:
-            self.close()
+            try:
+                self.conn.close()
+            except:
+                pass
             try:
                 logger.info('trying reconnect..')
-                self._db = MySQLdb.connect(**self._db_args)
+                self.conn = pymysql.Connection(**self.args)
                 if self.autocommit:
-                    self._db.autocommit(True)
+                    self.conn.autocommit(True)
                 logger.info('reconnected.')
                 break
             except:
                 logger.error('reconnect except', exc_info=1)
             time.sleep(self.reconnect_delay)
 
-    def iter(self, query, *args, **kwargs):
-        """Returns an iterator for the given query and args."""
-        cursor = MySQLdb.cursors.SSCursor(self._db)
+    def execute(self, query, *args, **kwargs):
+        """Executes the given query, returning the lastrowid from the query."""
+        return self.execute_lastrowid(query, *args, **kwargs)
+
+    def execute_lastrowid(self, query, *args, **kwargs):
+        """Executes the given query, returning the lastrowid from the query."""
         try:
-            self._execute(cursor, query, args, kwargs)
-            column_names = [d[0] for d in cursor.description]
-            for row in cursor:
-                yield Row(zip(column_names, row))
+            result, cursor = self._execute(query, args, kwargs)
+            if result is False:
+                return False
+            return cursor.lastrowid
         finally:
-            cursor.close()
+            if locals().get('cursor'):
+                cursor.close()
 
     def fetchall(self, query, *args, **kwargs):
         """Returns a row list for the given query and args."""
-        cursor = self._cursor()
         try:
-            self._execute(cursor, query, args, kwargs)
+            result, cursor = self._execute(query, args, kwargs)
             column_names = [d[0] for d in cursor.description]
+            if result is False:
+                return False
             return [Row(zip(column_names, row)) for row in cursor]
         finally:
-            cursor.close()
+            if locals().get('cursor'):
+                cursor.close()
 
     def fetchone(self, query, *args, **kwargs):
         """Returns the (singular) row returned by the given query.
@@ -107,40 +89,25 @@ class MySQLdbConnection(object):
         more than one result, raises an exception.
         """
         rows = self.fetchall(query, *args, **kwargs)
-        if not rows:
+        if rows is False:
+            return False
+        elif not rows:
             return None
         elif len(rows) > 1:
             logger.warn('Multiple rows returned for fetchone')
+            return rows[0]
         else:
             return rows[0]
-
-    # rowcount is a more reasonable default return value than lastrowid,
-    # but for historical compatibility execute() must return lastrowid.
-    def execute(self, query, *args, **kwargs):
-        """Executes the given query, returning the lastrowid from the query."""
-        return self.execute_lastrowid(query, *args, **kwargs)
-
-    def execute_lastrowid(self, query, *args, **kwargs):
-        """Executes the given query, returning the lastrowid from the query."""
-        cursor = self._cursor()
-        try:
-            self._execute(cursor, query, args, kwargs)
-            return cursor.lastrowid
-        finally:
-            cursor.close()
-
-    def execute_rowcount(self, query, *args, **kwargs):
-        """Executes the given query, returning the rowcount from the query."""
-        cursor = self._cursor()
-        try:
-            self._execute(cursor, query, args, kwargs)
-            return cursor.rowcount
-        finally:
-            cursor.close()
 
     def executemany(self, query, args):
         """Executes the given query against all the given param sequences.
         We return the lastrowid from the query.
+        example:
+        executemany('insert into book (name, author) values (%s, %s)',
+                    [
+                        ('a', u'张三'),
+                        ('b', u'李四'),
+                        ('c', u'王二')])
         """
         return self.executemany_lastrowid(query, args)
 
@@ -148,49 +115,78 @@ class MySQLdbConnection(object):
         """Executes the given query against all the given param sequences.
         We return the lastrowid from the query.
         """
-        cursor = self._cursor()
         try:
-            cursor.executemany(query, args)
+            result, cursor = self._executemany(query, args)
+            if result is False:
+                return False
             return cursor.lastrowid
         finally:
-            cursor.close()
+            if locals().get('cursor'):
+                cursor.close()
 
-    def executemany_rowcount(self, query, args):
-        """Executes the given query against all the given param sequences.
-        We return the rowcount from the query.
+    def _execute(self, query, args, kwargs):
         """
-        cursor = self._cursor()
+        :return: [result, cursor], result: False-表示不重连的时候查询失败(或者是重练成功后又执行失败)
+        """
+        cursor = self.conn.cursor()
         try:
-            cursor.executemany(query, args)
-            return cursor.rowcount
-        finally:
-            cursor.close()
-
-    update = execute_rowcount
-    updatemany = executemany_rowcount
-
-    insert = execute_lastrowid
-    insertmany = executemany_lastrowid
-
-    def _cursor(self):
-        return self._db.cursor()
-
-    def _execute(self, cursor, query, args, kwargs):
-        try:
-            return cursor.execute(query, kwargs or args)
-        except:  # OperationalError等
+            logger.debug('sql: %s, args: %s', query, str(args))
+            return [cursor.execute(query, args or kwargs), cursor]
+        except:
+            logger.warn('[Error query]: %s args: %s', query, str(args), exc_info=1)
             if self.reconnect_delay > 0:
                 self.reconnect()
-                # TODO: 语法等错误,重连后不再执行下面这句,直接return False, 而且要日志记录
+                cursor.close()
                 try:
-                    return cursor.execute(query, kwargs or args)
+                    cursor = self.conn.cursor()
+                    return [cursor.execute(query, args or kwargs), cursor]
                 except:
-                    logger.error('[Error query]:sql: %s args: %s', query, args, exc_info=1)
-                    return False
+                    logger.error('[Error query]:sql: %s args: %s', query, str(args), exc_info=1)
+                    cursor.close()
+                    return [False, cursor]
             else:
-                logger.error('[Error query]:sql: %s args: %s. Not reconnect', query, args, exc_info=1)
-                self.close()
-                return False
+                logger.error('[Error query]:sql: %s args: %s. Not reconnect', query, str(args), exc_info=1)
+                try:
+                    self.conn.close()
+                except:
+                    pass
+                cursor.close()
+                return [False, cursor]
+
+    def _executemany(self, query, args):
+        """
+        :return: [result, cursor], result: False-表示不重连的时候查询失败(或者是重练成功后又执行失败)
+        """
+        cursor = self.conn.cursor()
+        try:
+            logger.debug('sql: %s, args: %s', query, str(args))
+            return [cursor.executemany(query, args), cursor]
+        except:
+            logger.warn('[Error query]: %s args: %s', query, str(args), exc_info=1)
+            if self.reconnect_delay > 0:
+                self.reconnect()
+                cursor.close()
+                try:
+                    cursor = self.conn.cursor()
+                    return [cursor.executemany(query, args), cursor]
+                except:
+                    logger.error('[Error query]:sql: %s args: %s', query, str(args), exc_info=1)
+                    cursor.close()
+                    return [False, cursor]
+            else:
+                logger.error('[Error query]:sql: %s args: %s. Not reconnect', query, str(args), exc_info=1)
+                try:
+                    self.conn.close()
+                except:
+                    pass
+                cursor.close()
+                return [False, cursor]
+
+    def get_fields(self, table_name):
+        result, cursor = self._execute('select * from %s limit 0' % table_name, tuple(), tuple())
+        if result is False:
+            return False
+        return [i[0] for i in cursor.description]
 
 
 class Row(dict):
@@ -223,7 +219,178 @@ if MySQLdb is not None:
     IntegrityError = MySQLdb.IntegrityError
     OperationalError = MySQLdb.OperationalError
 
-import umysql
+try:
+    import pymysql
+except ImportError:
+    logger.warn('ultrasql module not found. please: pip install pymysql')
+
+
+class PyMySQLConnection(object):
+    def __init__(self, host, user, passwd, db, port=3306, autocommit=True, charset='utf8', reconnect_delay=0):
+        """
+        :param reconnect_delay: 重连等待时间, 0-不重连
+        """
+        self.args = dict(password=passwd, user=user, autocommit=autocommit, charset=charset, database=db)
+        if '/' in host:
+            self.args['unix_socket'] = host
+        else:
+            self.args['host'] = host
+            self.args['port'] = port
+        self.reconnect_delay = reconnect_delay
+        self.conn = pymysql.Connection(**self.args)
+
+    def reconnect(self):
+        while True:
+            try:
+                self.conn.close()
+            except:
+                pass
+            try:
+                logger.info('trying reconnect..')
+                self.conn = pymysql.Connection(**self.args)
+                logger.info('reconnected.')
+                break
+            except:
+                logger.error('reconnect except', exc_info=1)
+            time.sleep(self.reconnect_delay)
+
+    def execute(self, query, *args, **kwargs):
+        """Executes the given query, returning the lastrowid from the query."""
+        return self.execute_lastrowid(query, *args, **kwargs)
+
+    def execute_lastrowid(self, query, *args, **kwargs):
+        """Executes the given query, returning the lastrowid from the query."""
+        try:
+            result, cursor = self._execute(query, args, kwargs)
+            if result is False:
+                return False
+            return cursor.lastrowid
+        finally:
+            if locals().get('cursor'):
+                cursor.close()
+
+    def fetchall(self, query, *args, **kwargs):
+        """Returns a row list for the given query and args."""
+        try:
+            result, cursor = self._execute(query, args, kwargs)
+            column_names = [d[0] for d in cursor.description]
+            if result is False:
+                return False
+            return [Row(zip(column_names, row)) for row in cursor]
+        finally:
+            if locals().get('cursor'):
+                cursor.close()
+
+    def fetchone(self, query, *args, **kwargs):
+        """Returns the (singular) row returned by the given query.
+        If the query has no results, returns None.  If it has
+        more than one result, raises an exception.
+        """
+        rows = self.fetchall(query, *args, **kwargs)
+        if rows is False:
+            return False
+        elif not rows:
+            return None
+        elif len(rows) > 1:
+            logger.warn('Multiple rows returned for fetchone')
+            return rows[0]
+        else:
+            return rows[0]
+
+    def executemany(self, query, args):
+        """Executes the given query against all the given param sequences.
+        We return the lastrowid from the query.
+        example:
+        executemany('insert into book (name, author) values (%s, %s)',
+                    [
+                        ('a', u'张三'),
+                        ('b', u'李四'),
+                        ('c', u'王二')])
+        """
+        return self.executemany_lastrowid(query, args)
+
+    def executemany_lastrowid(self, query, args):
+        """Executes the given query against all the given param sequences.
+        We return the lastrowid from the query.
+        """
+        try:
+            result, cursor = self._executemany(query, args)
+            if result is False:
+                return False
+            return cursor.lastrowid
+        finally:
+            if locals().get('cursor'):
+                cursor.close()
+
+    def _execute(self, query, args, kwargs):
+        """
+        :return: [result, cursor], result: False-表示不重连的时候查询失败(或者是重练成功后又执行失败)
+        """
+        cursor = self.conn.cursor()
+        try:
+            logger.debug('sql: %s, args: %s', query, str(args))
+            return [cursor.execute(query, args or kwargs), cursor]
+        except:
+            logger.warn('[Error query]: %s args: %s', query, str(args), exc_info=1)
+            if self.reconnect_delay > 0:
+                self.reconnect()
+                cursor.close()
+                try:
+                    cursor = self.conn.cursor()
+                    return [cursor.execute(query, args or kwargs), cursor]
+                except:
+                    logger.error('[Error query]:sql: %s args: %s', query, str(args), exc_info=1)
+                    cursor.close()
+                    return [False, cursor]
+            else:
+                logger.error('[Error query]:sql: %s args: %s. Not reconnect', query, str(args), exc_info=1)
+                try:
+                    self.conn.close()
+                except:
+                    pass
+                cursor.close()
+                return [False, cursor]
+
+    def _executemany(self, query, args):
+        """
+        :return: [result, cursor], result: False-表示不重连的时候查询失败(或者是重练成功后又执行失败)
+        """
+        cursor = self.conn.cursor()
+        try:
+            logger.debug('sql: %s, args: %s', query, str(args))
+            return [cursor.executemany(query, args), cursor]
+        except:
+            logger.warn('[Error query]: %s args: %s', query, str(args), exc_info=1)
+            if self.reconnect_delay > 0:
+                self.reconnect()
+                cursor.close()
+                try:
+                    cursor = self.conn.cursor()
+                    return [cursor.executemany(query, args), cursor]
+                except:
+                    logger.error('[Error query]:sql: %s args: %s', query, str(args), exc_info=1)
+                    cursor.close()
+                    return [False, cursor]
+            else:
+                logger.error('[Error query]:sql: %s args: %s. Not reconnect', query, str(args), exc_info=1)
+                try:
+                    self.conn.close()
+                except:
+                    pass
+                cursor.close()
+                return [False, cursor]
+
+    def get_fields(self, table_name):
+        result, cursor = self._execute('select * from %s limit 0' % table_name, tuple(), tuple())
+        if result is False:
+            return False
+        return [i[0] for i in cursor.description]
+
+
+try:
+    import umysql
+except ImportError:
+    logger.warn('ultrasql module not found. please: pip install umysql')
 
 
 class UMySQLConnection(object):
@@ -249,13 +416,11 @@ class UMySQLConnection(object):
                 logger.error('reconnect except', exc_info=1)
             time.sleep(self.reconnect_delay)
 
-    def query(self, sql, args):
+    def query(self, sql, *args, **kwargs):
+        """ 真正执行查询的函数
+        :return: False-表示不重连的时候查询失败
         """
-        :return: 返回False-表示不重连的时候查询失败
-        """
-        logger.debug('sql: %s, args: %s', sql, str(args))
-        if args:
-            assert isinstance(args, (tuple, list))
+        logger.debug('sql: %s args: %s', sql, str(args))
         try:
             return self.conn.query(sql, args)
         except:
@@ -265,9 +430,61 @@ class UMySQLConnection(object):
                 try:
                     return self.conn.query(sql, args)
                 except:
-                    logger.error('[Error query]:sql: %s args: %s', sql, args, exc_info=1)
+                    logger.error('[Error query]:sql: %s args: %s', sql, str(args), exc_info=1)
                     return False
             else:
-                logger.error('[Error query]:sql: %s args: %s. Not reconnect', sql, args, exc_info=1)
+                logger.error('[Error query]:sql: %s args: %s. Not reconnect', sql, str(args), exc_info=1)
                 return False
 
+    def get_result_rows(self, rs):
+        fields = [row[0] for row in rs.fields]
+        return [dict(zip(fields, row)) for row in rs.rows]
+
+    def execute(self, sql, *args, **kwargs):
+        return self.query(sql, *args, **kwargs)
+
+    def fetchone(self, sql, *args, **kwargs):
+        rs = self.query(sql, *args, **kwargs)
+        if rs is False:
+            return False
+        rows = self.get_result_rows(rs)
+        if len(rows) > 0:
+            logger.warn('Multiple rows returned for fetchone')
+        row = rows and rows[0] or None
+        return row
+
+    def fetchall(self, sql, *args, **kwargs):
+        rs = self.query(sql, *args, **kwargs)
+        if rs is False:
+            return False
+        rows = self.get_result_rows(rs)
+        return rows
+
+    def get_fields(self, table_name):
+        result = self.query('select * from %s limit 0' % table_name)
+        if result is False:
+            return False
+        return [i[0] for i in result.fields]
+
+
+if __name__ == '__main__':
+    logging.basicConfig(level=logging.DEBUG, format='[%(asctime)-15s %(levelname)s:%(module)s] %(message)s')
+
+    options = dict(host='localhost', user='root', passwd='112358', db='test', reconnect_delay=5)
+
+    mysqldb_conn = MySQLdbConnection(**options)
+    print mysqldb_conn.fetchall('select * from book where author=%s', u'大大')
+    print mysqldb_conn.get_fields('book')
+
+    umysql_conn = UMySQLConnection(**options)
+    print umysql_conn.fetchall('select * from book where author=%s', u'大大')
+    print umysql_conn.execute('insert into book set name="abc", author=%s', u'大大')
+    print umysql_conn.get_fields('book')
+
+    pymysql_conn = PyMySQLConnection(**options)
+    print pymysql_conn.executemany('insert into book (name, author) values (%s, %s)',
+                                   [
+                                       ('a', u'张三'),
+                                       ('b', u'李四'),
+                                       ('c', u'王二')])
+    print pymysql_conn.get_fields('book')

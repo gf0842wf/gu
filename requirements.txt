@@ -1,3 +1,4 @@
 gevent
 umysql
+pymysql
 gevent-websocket

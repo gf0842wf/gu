@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """ description
-gevent mysql db utils
+mysql db utils
 """
 
 __author__ = 'wangfei'
