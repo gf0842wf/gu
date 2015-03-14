@@ -9,7 +9,6 @@ mysql db client (可以非gevent使用,如果使用gevent,需要程序入口文�
 __author__ = 'wangfei'
 __date__ = '2015/03/11'
 
-import copy
 import logging
 import time
 
@@ -201,6 +200,7 @@ class Row(dict):
 
 if MySQLdb is not None:
     # Fix the access conversions to properly recognize unicode/binary
+    import copy
     import MySQLdb.constants
     import MySQLdb.converters
 
@@ -230,7 +230,7 @@ class PyMySQLConnection(object):
         """
         :param reconnect_delay: 重连等待时间, 0-不重连
         """
-        self.args = dict(password=passwd, user=user, autocommit=autocommit, charset=charset, database=db)
+        self.args = dict(passwd=passwd, user=user, autocommit=autocommit, charset=charset, database=db)
         if '/' in host:
             self.args['unix_socket'] = host
         else:
@@ -443,6 +443,13 @@ class UMySQLConnection(object):
     def execute(self, sql, *args, **kwargs):
         return self.query(sql, *args, **kwargs)
 
+    def executemany(self, sql, args):
+        """警告: 这个和前两个不同,不能提供高性能
+        """
+        for _args in args:
+            ret = self.execute(sql, *_args)
+        return ret
+
     def fetchone(self, sql, *args, **kwargs):
         rs = self.query(sql, *args, **kwargs)
         if rs is False:
@@ -467,7 +474,24 @@ class UMySQLConnection(object):
         return [i[0] for i in result.fields]
 
 
-if __name__ == '__main__':
+def test_transaction():
+    logging.basicConfig(level=logging.DEBUG, format='[%(asctime)-15s %(levelname)s:%(module)s] %(message)s')
+
+    options = dict(host='localhost', user='root', passwd='112358', db='test', reconnect_delay=5)
+    # conn = MySQLdbConnection(**options)
+    # conn = PyMySQLConnection(**options)
+    conn = UMySQLConnection(**options)
+    conn.execute('truncate book')
+    conn.execute('START TRANSACTION')
+    conn.execute('SET AUTOCOMMIT=0')
+    conn.execute('insert into book set name="abc", author=%s', u'zhangsan')
+    conn.execute('ROLLBACK')
+    conn.execute('COMMIT')
+    conn.execute('SET AUTOCOMMIT=1')
+    print conn.fetchall('select * from book')
+
+
+def test_client():
     logging.basicConfig(level=logging.DEBUG, format='[%(asctime)-15s %(levelname)s:%(module)s] %(message)s')
 
     options = dict(host='localhost', user='root', passwd='112358', db='test', reconnect_delay=5)

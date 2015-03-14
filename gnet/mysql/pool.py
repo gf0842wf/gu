@@ -25,6 +25,7 @@ class Pool(object):
 
     def __init__(self, options, n, adapter='ultramysql'):
         """options必须有reconnect_delay参数且>0
+        : 使用事务时需要指定同一个qid
         """
         assert options.get('reconnect_delay', 0) > 0
 
