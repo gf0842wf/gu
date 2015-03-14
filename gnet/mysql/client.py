@@ -447,9 +447,8 @@ class UMySQLConnection(object):
         """警告: 这个和前两个不同,不能提供高性能
         """
         assert args
-        for _args in args:
-            ret = self.execute(sql, *_args)
-        return ret
+        rets = [self.execute(sql, _args) for _args in args]
+        return all(rets)
 
     def fetchone(self, sql, *args, **kwargs):
         rs = self.query(sql, *args, **kwargs)
