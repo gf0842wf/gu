@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """ description
-mysql db client (可以非gevent使用,如果使用gevent,需要程序入口文件patch all)
+mysql db client
 兼容 ultramysql, MySQLdb, pymysql
 """
 
@@ -186,6 +186,12 @@ class MySQLdbConnection(object):
         if result is False:
             return False
         return [i[0] for i in cursor.description]
+
+    def __del__(self):
+        try:
+            self.conn.close()
+        except:
+            pass
 
 
 class Row(dict):
@@ -386,6 +392,12 @@ class PyMySQLConnection(object):
             return False
         return [i[0] for i in cursor.description]
 
+    def __del__(self):
+        try:
+            self.conn.close()
+        except:
+            pass
+
 
 try:
     import umysql
@@ -473,6 +485,12 @@ class UMySQLConnection(object):
             return False
         return [i[0] for i in result.fields]
 
+    def __del__(self):
+        try:
+            self.conn.close()
+        except:
+            pass
+
 
 def test_transaction():
     logging.basicConfig(level=logging.DEBUG, format='[%(asctime)-15s %(levelname)s:%(module)s] %(message)s')
@@ -512,3 +530,4 @@ def test_client():
                                        ('b', u'李四'),
                                        ('c', u'王二')])
     print pymysql_conn.get_fields('book')
+

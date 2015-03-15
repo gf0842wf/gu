@@ -2,79 +2,24 @@
 # -*- coding: utf-8 -*-
 
 """ description
-mysql db client pool use threading
+mysql db client pool use gevent
 兼容 ultramysql, MySQLdb, pymysql
 """
 
 __author__ = 'wangfei'
 __date__ = '2015/03/12'
 
-from threading import Thread, Condition, Lock
-from Queue import Queue
+from gevent.event import AsyncResult
+from gevent.queue import Queue
+import gevent
 import logging
 import sys
 
 logger = logging.getLogger(__name__)
 
 
-class AsyncResult(object):
-    """threading模块提供了Event,但是没提供future/promise模式的异步 AsyncResult
-    AsyncResult类似阻塞channel
-    Queue类似非阻塞channel
-    """
-
-    def __init__(self):
-        self.cond = Condition(Lock())
-        self.value = None
-        self.exception = None
-
-    def set(self, value=None):
-        self.cond.acquire()
-        self.value = value
-        try:
-            self.cond.notify_all()
-        finally:
-            self.cond.release()
-
-    def set_exception(self, exception):
-        self.cond.acquire()
-        self.exception = exception
-        try:
-            self.cond.notify_all()
-        finally:
-            self.cond.release()
-
-    def get(self, block=True, timeout=None):
-        self.cond.acquire()
-        try:
-            if block:
-                self.cond.wait(timeout)
-        finally:
-            self.cond.release()
-            if self.exception is not None:
-                raise self.exception
-            return self.value
-
-
-def test_AsyncResult():
-    from threading import Thread
-    import time
-
-    event = AsyncResult()
-
-    def foo(event):
-        time.sleep(5)
-        event.set('ooxx')
-        # event.set_exception(Exception('ooxx'))
-
-    t = Thread(target=foo, args=(event,))
-    t.start()
-    print event.get()
-    print 'over..'
-
-
 class Pool(object):
-    """连接池,每个连接使用一个队列的连接池
+    """连接池,每个连接使用一个gevent队列的连接池
     """
 
     def __init__(self, options, n, adapter='ultramysql'):
@@ -101,10 +46,8 @@ class Pool(object):
             self.conns.append(c)
             q = Queue()
             self.queues.append(q)
-            t = Thread(target=self.loop, args=(c, q))
-            t.setDaemon(True)  # 主线程退出子线程退出
-            t.start()
-            self.tasks.append(t)
+            g = gevent.spawn(self.loop, c, q)
+            self.tasks.append(g)
 
         assert len(self.conns) == n
 
@@ -115,7 +58,7 @@ class Pool(object):
         result: 是gevent的AsyncResult对象, result为空则非阻塞
         """
         while True:
-            sql, args, op, async_result = q.get()
+            sql, args, op, async_result = q.peek()
             try:
                 rs = getattr(conn, op)(sql, *args)
                 if async_result:
@@ -123,11 +66,11 @@ class Pool(object):
             except Exception as e:
                 logger.error('[Last query]: %s %s', sql, str(args), exc_info=1)
                 if async_result:
-                    async_result.set_exception(Exception(sys.exc_info()[1]))
+                    async_result.set_exception(sys.exc_info()[1])
                 else:
                     logger.error(str(e))
             finally:
-                pass
+                q.next()
 
     def _selectq(self, qid=-1):
         """选择第几个队列, 默认返回长度最小的队列
@@ -160,6 +103,12 @@ class Pool(object):
 
 
 if __name__ == '__main__':
+    sys.modules.pop('threading', None)
+
+    from gevent import monkey
+
+    monkey.patch_all()
+
     logging.basicConfig(level=logging.DEBUG, format='[%(asctime)-15s %(levelname)s:%(module)s] %(message)s')
 
     test_options = dict(host='localhost', user='root', passwd='112358', db='test', reconnect_delay=5)
@@ -169,3 +118,5 @@ if __name__ == '__main__':
 
     # 像 execute 如果不关心执行结果,可以异步执行
     pool.execute('insert into book set name="abc", author=%s', (u'小小', ), block=False)
+
+    gevent.wait()

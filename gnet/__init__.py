@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 
 """ description
-gevent net utils
 """
 
 __author__ = 'wangfei'
