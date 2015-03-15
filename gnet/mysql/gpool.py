@@ -77,7 +77,7 @@ class Pool(object):
         """
         if qid >= 0:
             return self.queues[qid]
-        minq = min(self.queues, key=lambda qs: qs.qsize())
+        minq = min(self.queues, key=lambda q: q.qsize())
         return minq
 
     def _query(self, sql, args=tuple(), op='execute', qid=-1, block=True):
