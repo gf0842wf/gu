@@ -27,12 +27,22 @@ class AsyncResult(object):
         self.__flag = False
         self.__value = None
         self.__timeout = timeout
+        self.__exception = None
 
     def set(self, value=None):
         self.__cond.acquire()
         try:
             self.__flag = True
             self.__value = value
+            self.__cond.notify_all()
+        finally:
+            self.__cond.release()
+
+    def set_exception(self, exception=None):
+        self.__cond.acquire()
+        try:
+            self.__flag = True
+            self.__exception = exception
             self.__cond.notify_all()
         finally:
             self.__cond.release()
@@ -52,6 +62,8 @@ class AsyncResult(object):
         try:
             if not block:
                 return self.__value
+            if self.__exception is not None:
+                raise self.__exception
             if not self.__flag:
                 self.__cond.wait(timeout)
             return self.__value
