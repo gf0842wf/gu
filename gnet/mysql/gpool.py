@@ -81,13 +81,26 @@ class Pool(object):
         return minq
 
     def _query(self, sql, args=tuple(), op='execute', qid=-1, block=True):
+        deferred = self._execute(sql, args, op, qid, block)
+        if deferred:
+            return deferred.get()
+
+    def _execute(self, sql, args=tuple(), op='execute', qid=-1, block=True):
         q = self._selectq(qid)
         if block:
             async_result = AsyncResult()
             q.put((sql, args, op, async_result))
-            return async_result.get()
+            return async_result
         else:
             q.put((sql, args, op, None))
+
+    def map(self, op, sql_args, qid=-1, block=True):
+        """并发map
+        :param sql_args: [(sql, args), ..], eg. [(('select * from book where author=%s'), ('jack', )), ..]
+        :return 返回结果list
+        """
+        deferreds = [self._execute(s[0], s[1], op=op, qid=qid, block=block) for s in sql_args]
+        return [d.get() for d in deferreds]
 
     def execute(self, sql, args=tuple(), qid=-1, block=True):
         return self._query(sql, args, 'execute', qid, block)
@@ -112,10 +125,11 @@ if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG, format='[%(asctime)-15s %(levelname)s:%(module)s] %(message)s')
 
     test_options = dict(host='localhost', user='root', passwd='112358', db='test', reconnect_delay=5)
-    pool = Pool(test_options, 20, adapter='pymysql')
+    pool = Pool(test_options, 5, adapter='pymysql')
 
+    print pool.map('fetchall', [('select * from book where author = %s', (u'小小', )),
+                                ('select * from book where author = %s', (u'大大', ))])
     print pool.fetchall('select * from book where author = %s', (u'小小', ))
-
     # 像 execute 如果不关心执行结果,可以异步执行
     pool.execute('insert into book set name="abc", author=%s', (u'小小', ), block=False)
 

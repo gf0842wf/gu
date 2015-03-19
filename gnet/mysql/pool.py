@@ -18,58 +18,65 @@ logger = logging.getLogger(__name__)
 
 
 class AsyncResult(object):
-    """threading模块提供了Event,但是没提供future/promise模式的异步 AsyncResult
-    AsyncResult类似阻塞channel
-    Queue类似非阻塞channel
-    """
-
-    def __init__(self):
-        self.cond = Condition(Lock())
-        self.value = None
-        self.exception = None
+    def __init__(self, timeout=None):
+        """threading模块提供了Event,但是没提供future/promise模式的异步 AsyncResult
+        : AsyncResult类似阻塞channel
+        : Queue类似非阻塞channel
+        """
+        self.__cond = Condition(Lock())
+        self.__flag = False
+        self.__value = None
+        self.__timeout = timeout
 
     def set(self, value=None):
-        self.cond.acquire()
-        self.value = value
+        self.__cond.acquire()
         try:
-            self.cond.notify_all()
+            self.__flag = True
+            self.__value = value
+            self.__cond.notify_all()
         finally:
-            self.cond.release()
+            self.__cond.release()
 
-    def set_exception(self, exception):
-        self.cond.acquire()
-        self.exception = exception
+    def clear(self):
+        self.__cond.acquire()
         try:
-            self.cond.notify_all()
+            self.__flag = False
         finally:
-            self.cond.release()
+            self.__cond.release()
 
     def get(self, block=True, timeout=None):
-        self.cond.acquire()
+        if self.__timeout is not None:
+            timeout = self.__timeout
+
+        self.__cond.acquire()
         try:
-            if block:
-                self.cond.wait(timeout)
+            if not block:
+                return self.__value
+            if not self.__flag:
+                self.__cond.wait(timeout)
+            return self.__value
         finally:
-            self.cond.release()
-            if self.exception is not None:
-                raise self.exception
-            return self.value
+            self.__cond.release()
 
 
 def test_AsyncResult():
     from threading import Thread
     import time
 
-    event = AsyncResult()
+    event1 = AsyncResult()
+    event2 = AsyncResult()
 
     def foo(event):
-        time.sleep(5)
+        time.sleep(2)
         event.set('ooxx')
         # event.set_exception(Exception('ooxx'))
 
-    t = Thread(target=foo, args=(event,))
-    t.start()
-    print event.get()
+    t1 = Thread(target=foo, args=(event1,))
+    t2 = Thread(target=foo, args=(event2,))
+    t1.start()
+    t2.start()
+    print event1.get()
+    print event2.get()
     print 'over..'
 
 
@@ -141,13 +148,26 @@ class Pool(object):
         return minq
 
     def _query(self, sql, args=tuple(), op='execute', qid=-1, block=True):
+        deferred = self._execute(sql, args, op, qid, block)
+        if deferred:
+            return deferred.get()
+
+    def _execute(self, sql, args=tuple(), op='execute', qid=-1, block=True):
         q = self._selectq(qid)
         if block:
             async_result = AsyncResult()
             q.put((sql, args, op, async_result))
-            return async_result.get()
+            return async_result
         else:
             q.put((sql, args, op, None))
+
+    def map(self, op, sql_args, qid=-1, block=True):
+        """并发map
+        :param sql_args: [(sql, args), ..], eg. [(('select * from book where author=%s'), ('jack', )), ..]
+        :return 返回结果list
+        """
+        deferreds = [self._execute(s[0], s[1], op=op, qid=qid, block=block) for s in sql_args]
+        return [d.get() for d in deferreds]
 
     def execute(self, sql, args=tuple(), qid=-1, block=True):
         return self._query(sql, args, 'execute', qid, block)
@@ -166,11 +186,14 @@ if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG, format='[%(asctime)-15s %(levelname)s:%(module)s] %(message)s')
 
     test_options = dict(host='localhost', user='root', passwd='112358', db='test', reconnect_delay=5)
-    pool = Pool(test_options, 20, adapter='pymysql')
+    pool = Pool(test_options, 5, adapter='pymysql')
 
+    print pool.map('fetchall', [('select * from book where author = %s', (u'小小', )),
+                                ('select * from book where author = %s', (u'大大', ))])
     print pool.fetchall('select * from book where author = %s', (u'小小', ))
-
     # 像 execute 如果不关心执行结果,可以异步执行
     pool.execute('insert into book set name="abc", author=%s', (u'小小', ), block=False)
 
-    pool.join()
+    import time
+
+    time.sleep(10)

@@ -192,6 +192,8 @@ class MySQLdbConnection(object):
             self.conn.close()
         except:
             pass
+        finally:
+            logger.info('connection closed')
 
 
 class Row(dict):
@@ -397,6 +399,8 @@ class PyMySQLConnection(object):
             self.conn.close()
         except:
             pass
+        finally:
+            logger.info('connection closed')
 
 
 try:
@@ -490,6 +494,8 @@ class UMySQLConnection(object):
             self.conn.close()
         except:
             pass
+        finally:
+            logger.info('connection closed')
 
 
 def test_transaction():
