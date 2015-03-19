@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""threading pool"""
+"""gevent connection pool"""
 
 from gevent.event import AsyncResult
 from gevent.queue import Queue
