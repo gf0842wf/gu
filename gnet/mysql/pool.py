@@ -129,6 +129,9 @@ class Pool(object):
             finally:
                 pass
 
+    def join(self):
+        map(lambda t: t.join(), self.tasks)
+
     def _selectq(self, qid=-1):
         """选择第几个队列, 默认返回长度最小的队列
         """
@@ -169,3 +172,5 @@ if __name__ == '__main__':
 
     # 像 execute 如果不关心执行结果,可以异步执行
     pool.execute('insert into book set name="abc", author=%s', (u'小小', ), block=False)
+
+    pool.join()
