@@ -22,7 +22,7 @@ class Pool(object):
     """连接池,每个连接使用一个gevent队列的连接池
     """
 
-    def __init__(self, options, n, adapter='ultramysql'):
+    def __init__(self, n, connection_cls, options={}):
         """options必须有reconnect_delay参数且>0
         : 使用事务时需要指定同一个qid
         """
@@ -32,17 +32,8 @@ class Pool(object):
         self.queues = []
         self.tasks = []
 
-        if adapter == 'ultramysql':
-            from client import UMySQLConnection as Connection
-        elif adapter == 'MySQLdb':
-            from client import MySQLdbConnection as Connection
-        elif adapter == 'pymysql':
-            from client import PyMySQLConnection as Connection
-        else:
-            raise Exception('mysql client adapter not found')
-
         for _ in xrange(n):
-            c = Connection(**options)
+            c = connection_cls(**options)
             self.conns.append(c)
             q = Queue()
             self.queues.append(q)
@@ -121,11 +112,12 @@ if __name__ == '__main__':
     from gevent import monkey
 
     monkey.patch_all()
+    from client import PyMySQLConnection
 
     logging.basicConfig(level=logging.DEBUG, format='[%(asctime)-15s %(levelname)s:%(module)s] %(message)s')
 
     test_options = dict(host='localhost', user='root', passwd='112358', db='test', reconnect_delay=5)
-    pool = Pool(test_options, 5, adapter='pymysql')
+    pool = Pool(5, PyMySQLConnection, test_options)
 
     print pool.map('fetchall', [('select * from book where author = %s', (u'小小', )),
                                 ('select * from book where author = %s', (u'大大', ))])
