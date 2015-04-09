@@ -8,7 +8,7 @@ test server and client
 __author__ = 'wangfei'
 __date__ = '2015/03/06'
 
-from gnet.protocol import Protocol
+from gu.protocol import Protocol
 import gevent
 import logging
 

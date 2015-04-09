@@ -19,7 +19,7 @@ setup(
     description='gevent net utils',
     author='fk',
     author_email='gf0842wf@gmail.com',
-    packages=['gnet', 'gnet.mysql'],
+    packages=['gnet'],
     package_data={'': ['README.md']},
     license='MIT',
     classifiers=[
