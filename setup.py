@@ -14,12 +14,12 @@ except ImportError:
     from distutils.core import setup
 
 setup(
-    name='gnet',
+    name='gu',
     version='0.1.0',
     description='gevent net utils',
     author='fk',
     author_email='gf0842wf@gmail.com',
-    packages=['gnet'],
+    packages=['gu'],
     package_data={'': ['README.md']},
     license='MIT',
     classifiers=[
