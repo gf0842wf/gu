@@ -1,9 +1,6 @@
 # -*- coding: utf-8 -*-
 """utils"""
 
-__author__ = 'wangfei'
-__date__ = '2015/03/06'
-
 
 def shorten(s, width=80):
     """
