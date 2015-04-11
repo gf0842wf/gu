@@ -1,8 +1,5 @@
 # -*- coding: utf-8 -*-
-
-""" description
-延时,循环,超时等gevent工具
-"""
+"""延时,循环,超时等gevent工具"""
 
 import gevent
 import time
