@@ -1,9 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-
-""" description
-test reconnecting client
-"""
+"""test reconnecting client"""
 
 __author__ = 'wangfei'
 __date__ = '2015/03/06'
