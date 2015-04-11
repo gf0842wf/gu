@@ -1,9 +1,6 @@
 # -*- coding: utf-8 -*-
 """参照 twisted/asyncio重新设计下api"""
 
-__author__ = 'wangfei'
-__date__ = '2015/03/06'
-
 import gevent.monkey
 
 gevent.monkey.patch_socket()
