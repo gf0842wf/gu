@@ -1,12 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-
-""" description
-test server and client
-"""
-
-__author__ = 'wangfei'
-__date__ = '2015/03/06'
+""" test server and client"""
 
 from gu.protocol import Protocol
 import gevent
